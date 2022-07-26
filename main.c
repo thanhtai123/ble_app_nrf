@@ -111,82 +111,27 @@ static uint16_t m_conn_handle = BLE_CONN_HANDLE_INVALID; /**< Handle of the curr
 static uint8_t m_adv_handle = BLE_GAP_ADV_SET_HANDLE_NOT_SET;           /**< Advertising handle used to identify an advertising set. */
 static uint8_t m_enc_advdata[BLE_GAP_ADV_SET_DATA_SIZE_MAX];            /**< Buffer for storing an encoded advertising set. */
 static uint8_t m_enc_scan_response_data[BLE_GAP_ADV_SET_DATA_SIZE_MAX]; /**< Buffer for storing an encoded scan data. */
+static uint8_t uuidType ;    // store value after register 128 bit uuid vendor
 uint8_t myuuid_le[] = {
     0x4f, 0x3a, 0x15, 0x97, 0x99, 0x86, 0x10, 0xa9,
     0x5c, 0x40, 0x91, 0xc4, 0x00, 0x00, 0x28, 0xfb};
 /**@brief Struct that contains pointers to the encoded advertising data. */
 static ble_gap_adv_data_t m_adv_data =
-    {
-        .adv_data =
-            {
-                .p_data = m_enc_advdata,
-                .len = BLE_GAP_ADV_SET_DATA_SIZE_MAX},
-        .scan_rsp_data =
-            {
-                .p_data = m_enc_scan_response_data,
-                .len = BLE_GAP_ADV_SET_DATA_SIZE_MAX}};
-
-/**@brief Function for find position of complete 128-bit UUID and size of the packet.
- * @param[in]       packetPtr           Provide original 31-byte package.
- * @param[out]      size                Contain the size of package after travel include the AD_LENGTH_FIELD_SIZE.
- * @param[out]      posUUID             Contain the position of UUID type start at ADV_LENGTH.
- * @retval      ::NRF_SUCCESS           Success find the position of UUID type in the package.
-* @retval       ::NRF_ERROR_NOT_FOUND   Success find the position of UUID type in the package.
- */
-static uint8_t myadv_packet_find_uuid(MYADV_PACKET_PTR packetPtr, uint8_t *size, uint8_t *posUUID)
 {
-    uint8_t res = 0; // return the result of find uuid postion or not
-    *size = 0;
-    for (int i = 0; i < BLE_GAP_ADV_SET_DATA_SIZE_MAX; i += packetPtr[i] + AD_LENGTH_FIELD_SIZE)
-    {
-        uint8_t byteLength = packetPtr[i]; // get length
-        if (!byteLength)
+    .adv_data =
         {
-            break; // end of the packet with length = 0
-        }
-        *size += byteLength + AD_LENGTH_FIELD_SIZE; // update the size
-        if (res)
+            .p_data = m_enc_advdata,
+            .len = BLE_GAP_ADV_SET_DATA_SIZE_MAX
+        },
+    .scan_rsp_data =
         {
-            continue; // continue if already find the UUID pos
+            .p_data = m_enc_scan_response_data,
+            .len = BLE_GAP_ADV_SET_DATA_SIZE_MAX
         }
-        uint8_t byteType = packetPtr[i + AD_LENGTH_FIELD_SIZE]; // get type
-        if (byteType == BLE_GAP_AD_TYPE_128BIT_SERVICE_UUID_COMPLETE)
-        {
-            // update pos and ressult
-            *posUUID = i;
-            res = 1;
-        }
-    }
-    return res ? NRF_SUCCESS : NRF_ERROR_NOT_FOUND;
-}
+};
 
-/**@brief Function for add 128-bit custom UUID to advertise package or reponse package.
- * pre-condition:                   The 31-byte package in the right format: length-type-data.
- * @para[in/out]    packetPtr       The original package.
- * @para[in]        uuid128Ptr      128bit UUID.
- * @retvl   ::NRF_SUCCESS           Succes insert or replace the custom UUID.
- * @retvl   ::NRF_ERROR_NOT_FOUND   Fail to insert duel to reach max size of package(31 byte).
- */
-static uint8_t myadv_packet_insert_uuid(MYADV_PACKET_PTR packetPtr, MYADV_UUID_128_PTR uuid128Ptr)
-{
-    uint8_t size = 0, posUUID = 0;
-    uint8_t findStatus = myadv_packet_find_uuid(packetPtr, &size, &posUUID);
-    uint16_t exeptSize = BLE_GAP_ADV_SET_DATA_SIZE_MAX - UUID_128_SIZE_IN_BYTE + AD_LENGTH_FIELD_SIZE + AD_TYPE_FIELD_SIZE;
-    if (findStatus==NRF_ERROR_NOT_FOUND && size > exeptSize) // not find and cant insert
-    {
-        return NRF_ERROR_NOT_FOUND;
-    }
-    if (findStatus==NRF_ERROR_NOT_FOUND  && size <= exeptSize) // insert
-    {
-        packetPtr[size] = UUID_128_SIZE_IN_BYTE + AD_TYPE_FIELD_SIZE;                          // length
-        packetPtr[size + AD_LENGTH_FIELD_SIZE] = BLE_GAP_AD_TYPE_128BIT_SERVICE_UUID_COMPLETE; // type
-        memcpy((packetPtr + size + AD_LENGTH_FIELD_SIZE + AD_TYPE_FIELD_SIZE), uuid128Ptr, UUID_128_SIZE_IN_BYTE);
-        return NRF_SUCCESS;
-    }
-    // replay at uuid position
-    memcpy((packetPtr + posUUID + AD_LENGTH_FIELD_SIZE + AD_TYPE_FIELD_SIZE), uuid128Ptr, UUID_128_SIZE_IN_BYTE);
-    return NRF_SUCCESS;
-}
+
+static uint8_t uuid128bit_vendor_reg(uint8_t *uuidBase, uint8_t *uuidType);
 
 /**@brief Function for assert macro callback.
  *
@@ -261,23 +206,31 @@ static void gatt_init(void)
     APP_ERROR_CHECK(err_code);
 }
 
+static uint8_t myservice_init(void)
+{
+    return uuid128bit_vendor_reg(myuuid_le, &uuidType);
+}
+
+static uint8_t uuid128bit_vendor_reg(uint8_t *uuidBase_p, uint8_t *uuidType_p)
+{
+    ble_uuid128_t uuid128_s;
+    memcpy(uuid128_s.uuid128, uuidBase_p, 16);
+    return sd_ble_uuid_vs_add(&uuid128_s, uuidType_p);
+}
+
 /**@brief Function for initializing the Advertising functionality.
  *
  * @details Encodes the required advertising data and passes it to the stack.
  *          Also builds a structure to be passed to the stack when starting advertising.
  */
-
-#ifdef TEST_INSERT_UUID
-static void my_test_unit();
-#endif
 static void advertising_init(void)
 {
     ret_code_t err_code;
     ble_advdata_t advdata;
     ble_advdata_t srdata;
 
-    ble_uuid_t adv_uuids[] = {{LBS_UUID_SERVICE, m_lbs.uuid_type}};
-
+    ble_uuid_t adv_uuids[] = {{0x1122, uuidType}};
+    NRF_LOG_INFO("uuidtype %d",(int)uuidType);
     // Build and set advertising data.
     memset(&advdata, 0, sizeof(advdata));
 
@@ -307,60 +260,10 @@ static void advertising_init(void)
     adv_params.filter_policy = BLE_GAP_ADV_FP_ANY;
     adv_params.interval = APP_ADV_INTERVAL;
 
-    myadv_packet_insert_uuid(m_adv_data.scan_rsp_data.p_data, myuuid_le);
-#ifdef TEST_INSERT_UUID
-    my_test_unit();
-#endif
     //MYLOG_ADV_PKG(m_adv_data.scan_rsp_data.p_data)
     err_code = sd_ble_gap_adv_set_configure(&m_adv_handle, &m_adv_data, &adv_params);
     APP_ERROR_CHECK(err_code);
-
-    // test/
 }
-
-#ifdef TEST_INSERT_UUID
-// is found, size ok
-static uint8_t test1[] = {
-    0x03, 0x13, 0x01, 0x02, 0x11, 0x07, 0x13, 0x13,
-    0x13, 0x13, 0x13, 0x13, 0x13, 0x13, 0x13, 0x13,
-    0x13, 0x13, 0x13, 0x13, 0x13, 0x13, 0x08, 0x13,
-    0x13, 0x13, 0x13, 0x13, 0x13, 0x13, 0x13};
-// is not found, size ok
-static uint8_t test2[] = {
-    0x03, 0x13, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-// is not found, size not ok
-static uint8_t test3[] = {
-    0x03, 0x13, 0x01, 0x02, 0x11, 0x08, 0x13, 0x13,
-    0x13, 0x13, 0x13, 0x13, 0x13, 0x13, 0x13, 0x13,
-    0x13, 0x13, 0x13, 0x13, 0x13, 0x13, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-void my_test_unit()
-{
-    uint8_t myuuid_le_t[] = {
-        0x13, 0x13, 0x13, 0x13, 0x11, 0x13, 0x13, 0x13,
-        0x11, 0x11, 0x11, 0x11, 0x13, 0x11, 0x11, 0x11};
-
-    //  not found, size ok
-    NRF_LOG_INFO("test2: ");
-
-    myadv_packet_insert_uuid(test2, myuuid_le_t);
-    MYLOG_ADV_PKG(test2)
-
-    //  not found, size ok
-    NRF_LOG_INFO("test1: ");
-
-    myadv_packet_insert_uuid(test1, myuuid_le_t);
-    MYLOG_ADV_PKG(test1)
-    // size not ok
-    NRF_LOG_INFO("test3: ");
-
-    myadv_packet_insert_uuid(test3, myuuid_le_t);
-    MYLOG_ADV_PKG(test3)
-}
-#endif
 
 /**@brief Function for handling Queued Write Module errors.
  *
@@ -409,7 +312,6 @@ static void services_init(void)
 
     // Initialize LBS.
     init.led_write_handler = led_write_handler;
-
     err_code = ble_lbs_init(&m_lbs, &init);
     APP_ERROR_CHECK(err_code);
 }
@@ -592,26 +494,27 @@ static void ble_stack_init(void)
  */
 static void button_event_handler(uint8_t pin_no, uint8_t button_action)
 {
-    ret_code_t err_code;
+    bsp_board_led_invert(1);
+    //ret_code_t err_code;
 
-    switch (pin_no)
-    {
-    case LEDBUTTON_BUTTON:
-        NRF_LOG_INFO("Send button state change.");
-        err_code = ble_lbs_on_button_change(m_conn_handle, &m_lbs, button_action);
-        if (err_code != NRF_SUCCESS &&
-            err_code != BLE_ERROR_INVALID_CONN_HANDLE &&
-            err_code != NRF_ERROR_INVALID_STATE &&
-            err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
-        {
-            APP_ERROR_CHECK(err_code);
-        }
-        break;
+    // switch (pin_no)
+    // {
+    // case LEDBUTTON_BUTTON:
+    //     NRF_LOG_INFO("Send button state change.");
+    //     err_code = ble_lbs_on_button_change(m_conn_handle, &m_lbs, button_action);
+    //     if (err_code != NRF_SUCCESS &&
+    //         err_code != BLE_ERROR_INVALID_CONN_HANDLE &&
+    //         err_code != NRF_ERROR_INVALID_STATE &&
+    //         err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
+    //     {
+    //         APP_ERROR_CHECK(err_code);
+    //     }
+    //     break;
 
-    default:
-        APP_ERROR_HANDLER(pin_no);
-        break;
-    }
+    // default:
+    //     APP_ERROR_HANDLER(pin_no);
+    //     break;
+    // }
 }
 
 /**@brief Function for initializing the button handler module.
@@ -628,6 +531,7 @@ static void buttons_init(void)
     err_code = app_button_init(buttons, ARRAY_SIZE(buttons),
                                BUTTON_DETECTION_DELAY);
     APP_ERROR_CHECK(err_code);
+    app_button_enable();
 }
 
 static void log_init(void)
@@ -659,6 +563,8 @@ static void idle_state_handle(void)
     }
 }
 
+
+
 /**@brief Function for application main entry.
  */
 int main(void)
@@ -673,8 +579,10 @@ int main(void)
     gap_params_init();
     gatt_init();
     services_init();
+    myservice_init();
     advertising_init();
     conn_params_init();
+    //myservice_init();
 
     // Start execution.
     NRF_LOG_INFO("Blinky example started.");
