@@ -60,6 +60,7 @@
 #include "app_timer.h"
 #include "app_button.h"
 #include "ble_lbs.h"
+#include "myserv.h"
 #include "nrf_ble_gatt.h"
 #include "nrf_ble_qwr.h"
 #include "nrf_pwr_mgmt.h"
@@ -102,20 +103,16 @@
         NRF_LOG_INFO("Byte at %i val: %02X", i, pkg[i]); \
     }
 
-BLE_LBS_DEF(m_lbs);       /**< LED Button Service instance. */
+//BLE_MSV_DEF(m_msv);
 NRF_BLE_GATT_DEF(m_gatt); /**< GATT module instance. */
 NRF_BLE_QWR_DEF(m_qwr);   /**< Context for the Queued Write module.*/
 
 static uint16_t m_conn_handle = BLE_CONN_HANDLE_INVALID; /**< Handle of the current connection. */
+static ble_msv_t m_msv;
 
 static uint8_t m_adv_handle = BLE_GAP_ADV_SET_HANDLE_NOT_SET;           /**< Advertising handle used to identify an advertising set. */
 static uint8_t m_enc_advdata[BLE_GAP_ADV_SET_DATA_SIZE_MAX];            /**< Buffer for storing an encoded advertising set. */
 static uint8_t m_enc_scan_response_data[BLE_GAP_ADV_SET_DATA_SIZE_MAX]; /**< Buffer for storing an encoded scan data. */
-static uint8_t uuidType ;    // store value after register 128 bit uuid vendor
-uint8_t myuuid_le[] = {
-    0x4f, 0x3a, 0x15, 0x97, 0x99, 0x86, 0x10, 0xa9,
-    0x5c, 0x40, 0x91, 0xc4, 0x00, 0x00, 0x28, 0xfb};
-/**@brief Struct that contains pointers to the encoded advertising data. */
 static ble_gap_adv_data_t m_adv_data =
 {
     .adv_data =
@@ -131,7 +128,6 @@ static ble_gap_adv_data_t m_adv_data =
 };
 
 
-static uint8_t uuid128bit_vendor_reg(uint8_t *uuidBase, uint8_t *uuidType);
 
 /**@brief Function for assert macro callback.
  *
@@ -206,18 +202,6 @@ static void gatt_init(void)
     APP_ERROR_CHECK(err_code);
 }
 
-static uint8_t myservice_init(void)
-{
-    return uuid128bit_vendor_reg(myuuid_le, &uuidType);
-}
-
-static uint8_t uuid128bit_vendor_reg(uint8_t *uuidBase_p, uint8_t *uuidType_p)
-{
-    ble_uuid128_t uuid128_s;
-    memcpy(uuid128_s.uuid128, uuidBase_p, 16);
-    return sd_ble_uuid_vs_add(&uuid128_s, uuidType_p);
-}
-
 /**@brief Function for initializing the Advertising functionality.
  *
  * @details Encodes the required advertising data and passes it to the stack.
@@ -229,8 +213,7 @@ static void advertising_init(void)
     ble_advdata_t advdata;
     ble_advdata_t srdata;
 
-    ble_uuid_t adv_uuids[] = {{0x1122, uuidType}};
-    NRF_LOG_INFO("uuidtype %d",(int)uuidType);
+    ble_uuid_t adv_uuids[] = {{MSV_UUID_SERVICE, m_msv.uuid_type}};
     // Build and set advertising data.
     memset(&advdata, 0, sizeof(advdata));
 
@@ -277,31 +260,12 @@ static void nrf_qwr_error_handler(uint32_t nrf_error)
     APP_ERROR_HANDLER(nrf_error);
 }
 
-/**@brief Function for handling write events to the LED characteristic.
- *
- * @param[in] p_lbs     Instance of LED Button Service to which the write applies.
- * @param[in] led_state Written/desired state of the LED.
- */
-static void led_write_handler(uint16_t conn_handle, ble_lbs_t *p_lbs, uint8_t led_state)
-{
-    if (led_state)
-    {
-        bsp_board_led_on(LEDBUTTON_LED);
-        NRF_LOG_INFO("Received LED ON!");
-    }
-    else
-    {
-        bsp_board_led_off(LEDBUTTON_LED);
-        NRF_LOG_INFO("Received LED OFF!");
-    }
-}
 
 /**@brief Function for initializing services that will be used by the application.
  */
 static void services_init(void)
 {
     ret_code_t err_code;
-    ble_lbs_init_t init = {0};
     nrf_ble_qwr_init_t qwr_init = {0};
 
     // Initialize Queued Write Module.
@@ -310,9 +274,7 @@ static void services_init(void)
     err_code = nrf_ble_qwr_init(&m_qwr, &qwr_init);
     APP_ERROR_CHECK(err_code);
 
-    // Initialize LBS.
-    init.led_write_handler = led_write_handler;
-    err_code = ble_lbs_init(&m_lbs, &init);
+    err_code = ble_myserv_init(&m_msv);
     APP_ERROR_CHECK(err_code);
 }
 
@@ -579,10 +541,8 @@ int main(void)
     gap_params_init();
     gatt_init();
     services_init();
-    myservice_init();
     advertising_init();
     conn_params_init();
-    //myservice_init();
 
     // Start execution.
     NRF_LOG_INFO("Blinky example started.");
