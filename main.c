@@ -72,15 +72,16 @@
 
 #define ADVERTISING_LED BSP_BOARD_LED_0 /**< Is on when device is advertising. */
 #define CONNECTED_LED BSP_BOARD_LED_1   /**< Is on when device has connected. */
-#define LEDBUTTON_LED BSP_BOARD_LED_2   /**< LED to be toggled with the help of the LED Button Service. */
-#define LEDBUTTON_BUTTON BSP_BUTTON_0   /**< Button that will trigger the notification event with the LED Button Service */
+#define BLEBUTTON_START BSP_BUTTON_0    // start the advertise service
+#define BLEBUTTON_STOP BSP_BUTTON_1     // stop the advertise service and disconnect gatt if it's connected
+#define BLEBUTTON_DISC BSP_BUTTON_2     // stop the advertise service and disconnect gatt if it's connected
 
 #define DEVICE_NAME "SafeTrust_tai" /**< Name of device. Will be included in the advertising data. */
 
 #define APP_BLE_OBSERVER_PRIO 3 /**< Application's BLE observer priority. You shouldn't need to modify this value. */
 #define APP_BLE_CONN_CFG_TAG 1  /**< A tag identifying the SoftDevice BLE configuration. */
 
-#define APP_ADV_INTERVAL 160                                    /**< The advertising interval (in units of 0.625 ms; this value corresponds to 40 ms). */
+#define APP_ADV_INTERVAL 160                                   /**< The advertising interval (in units of 0.625 ms; this value corresponds to 40 ms). */
 #define APP_ADV_DURATION BLE_GAP_ADV_TIMEOUT_GENERAL_UNLIMITED /**< The advertising time-out (in units of seconds). When set to 0, we will never time out. */
 
 #define MIN_CONN_INTERVAL MSEC_TO_UNITS(100, UNIT_1_25_MS) /**< Minimum acceptable connection interval (0.5 seconds). */
@@ -103,7 +104,7 @@
         NRF_LOG_INFO("Byte at %i val: %02X", i, pkg[i]); \
     }
 
-//BLE_MSV_DEF(m_msv);
+// BLE_MSV_DEF(m_msv);
 NRF_BLE_GATT_DEF(m_gatt); /**< GATT module instance. */
 NRF_BLE_QWR_DEF(m_qwr);   /**< Context for the Queued Write module.*/
 
@@ -114,20 +115,15 @@ static uint8_t m_adv_handle = BLE_GAP_ADV_SET_HANDLE_NOT_SET;           /**< Adv
 static uint8_t m_enc_advdata[BLE_GAP_ADV_SET_DATA_SIZE_MAX];            /**< Buffer for storing an encoded advertising set. */
 static uint8_t m_enc_scan_response_data[BLE_GAP_ADV_SET_DATA_SIZE_MAX]; /**< Buffer for storing an encoded scan data. */
 static ble_gap_adv_data_t m_adv_data =
-{
-    .adv_data =
-        {
-            .p_data = m_enc_advdata,
-            .len = BLE_GAP_ADV_SET_DATA_SIZE_MAX
-        },
-    .scan_rsp_data =
-        {
-            .p_data = m_enc_scan_response_data,
-            .len = BLE_GAP_ADV_SET_DATA_SIZE_MAX
-        }
-};
-
-
+    {
+        .adv_data =
+            {
+                .p_data = m_enc_advdata,
+                .len = BLE_GAP_ADV_SET_DATA_SIZE_MAX},
+        .scan_rsp_data =
+            {
+                .p_data = m_enc_scan_response_data,
+                .len = BLE_GAP_ADV_SET_DATA_SIZE_MAX}};
 
 /**@brief Function for assert macro callback.
  *
@@ -243,7 +239,7 @@ static void advertising_init(void)
     adv_params.filter_policy = BLE_GAP_ADV_FP_ANY;
     adv_params.interval = APP_ADV_INTERVAL;
 
-    //MYLOG_ADV_PKG(m_adv_data.scan_rsp_data.p_data)
+    // MYLOG_ADV_PKG(m_adv_data.scan_rsp_data.p_data)
     err_code = sd_ble_gap_adv_set_configure(&m_adv_handle, &m_adv_data, &adv_params);
     APP_ERROR_CHECK(err_code);
 }
@@ -260,14 +256,13 @@ static void nrf_qwr_error_handler(uint32_t nrf_error)
     APP_ERROR_HANDLER(nrf_error);
 }
 
-
 /**@brief Function for initializing services that will be used by the application.
  */
 static void services_init(void)
 {
     ret_code_t err_code;
     nrf_ble_qwr_init_t qwr_init = {0};
-
+    memset(&m_msv, 0, sizeof(m_msv));
     // Initialize Queued Write Module.
     qwr_init.error_handler = nrf_qwr_error_handler;
 
@@ -339,10 +334,34 @@ static void advertising_start(void)
 
     err_code = sd_ble_gap_adv_start(m_adv_handle, APP_BLE_CONN_CFG_TAG);
     APP_ERROR_CHECK(err_code);
-
+    NRF_LOG_INFO("in start adv");
     bsp_board_led_on(ADVERTISING_LED);
 }
 
+static void connecting_stop(void)
+{
+    //no need to call advertising_stop
+    sd_ble_gap_disconnect(m_conn_handle,
+                                         BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
+    m_msv.conn_stat = MSV_CONN_STAT_SER_DISC;
+    NRF_LOG_INFO("in stop conn");
+}
+
+/**@brief Function for starting advertising.
+ */
+static void advertising_stop(void)
+{
+    if(m_msv.conn_stat == MSV_CONN_STAT_DISC)
+    {
+    sd_ble_gap_adv_stop(m_adv_handle);
+    // APP_ERROR_CHECK(err_code);
+    bsp_board_led_off(ADVERTISING_LED);
+    NRF_LOG_INFO("in stop adv");
+    } else
+    {
+        connecting_stop();
+    }
+}
 /**@brief Function for handling BLE events.
  *
  * @param[in]   p_ble_evt   Bluetooth stack event.
@@ -351,7 +370,6 @@ static void advertising_start(void)
 static void ble_evt_handler(ble_evt_t const *p_ble_evt, void *p_context)
 {
     ret_code_t err_code;
-
     switch (p_ble_evt->header.evt_id)
     {
     case BLE_GAP_EVT_CONNECTED:
@@ -361,17 +379,18 @@ static void ble_evt_handler(ble_evt_t const *p_ble_evt, void *p_context)
         m_conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
         err_code = nrf_ble_qwr_conn_handle_assign(&m_qwr, m_conn_handle);
         APP_ERROR_CHECK(err_code);
-        err_code = app_button_enable();
-        APP_ERROR_CHECK(err_code);
+        NRF_LOG_INFO("in cb conn adv");
+        m_msv.conn_stat = MSV_CONN_STAT_CONN;
         break;
 
     case BLE_GAP_EVT_DISCONNECTED:
+        // handle disconnect from server and client
         NRF_LOG_INFO("Disconnected");
         bsp_board_led_off(CONNECTED_LED);
         m_conn_handle = BLE_CONN_HANDLE_INVALID;
-        err_code = app_button_disable();
-        APP_ERROR_CHECK(err_code);
-        advertising_start();
+        if(m_msv.conn_stat != MSV_CONN_STAT_SER_DISC) advertising_start();
+        m_msv.conn_stat = MSV_CONN_STAT_DISC;
+        NRF_LOG_INFO("in cb disconn adv");
         break;
 
     case BLE_GAP_EVT_SEC_PARAMS_REQUEST:
@@ -456,27 +475,28 @@ static void ble_stack_init(void)
  */
 static void button_event_handler(uint8_t pin_no, uint8_t button_action)
 {
-    bsp_board_led_invert(1);
-    //ret_code_t err_code;
-
-    // switch (pin_no)
-    // {
-    // case LEDBUTTON_BUTTON:
-    //     NRF_LOG_INFO("Send button state change.");
-    //     err_code = ble_lbs_on_button_change(m_conn_handle, &m_lbs, button_action);
-    //     if (err_code != NRF_SUCCESS &&
-    //         err_code != BLE_ERROR_INVALID_CONN_HANDLE &&
-    //         err_code != NRF_ERROR_INVALID_STATE &&
-    //         err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
-    //     {
-    //         APP_ERROR_CHECK(err_code);
-    //     }
-    //     break;
-
-    // default:
-    //     APP_ERROR_HANDLER(pin_no);
-    //     break;
-    // }
+    if (button_action != APP_BUTTON_RELEASE)
+    {
+        return;
+    }
+    switch (pin_no)
+    {
+    case BLEBUTTON_START:
+        NRF_LOG_INFO("Start button push");
+        advertising_start();
+        break;
+    case BLEBUTTON_STOP:
+        NRF_LOG_INFO("Stop button push");
+        advertising_stop();
+        break;
+    case BLEBUTTON_DISC:
+        NRF_LOG_INFO("disconnect button push");
+        connecting_stop();
+        break;
+    default:
+        APP_ERROR_HANDLER(pin_no);
+        break;
+    }
 }
 
 /**@brief Function for initializing the button handler module.
@@ -484,11 +504,12 @@ static void button_event_handler(uint8_t pin_no, uint8_t button_action)
 static void buttons_init(void)
 {
     ret_code_t err_code;
-
+    bsp_board_init(BSP_INIT_BUTTONS);
     // The array must be static because a pointer to it will be saved in the button handler module.
     static app_button_cfg_t buttons[] =
         {
-            {LEDBUTTON_BUTTON, false, BUTTON_PULL, button_event_handler}};
+            {BLEBUTTON_STOP, APP_BUTTON_ACTIVE_LOW, BUTTON_PULL, button_event_handler},
+            {BLEBUTTON_START, APP_BUTTON_ACTIVE_LOW, BUTTON_PULL, button_event_handler}};
 
     err_code = app_button_init(buttons, ARRAY_SIZE(buttons),
                                BUTTON_DETECTION_DELAY);
@@ -524,8 +545,6 @@ static void idle_state_handle(void)
         nrf_pwr_mgmt_run();
     }
 }
-
-
 
 /**@brief Function for application main entry.
  */

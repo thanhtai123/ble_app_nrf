@@ -5,6 +5,10 @@ OUTPUT_DIRECTORY := _build
 SDK_ROOT := /Users/tainguyen/Library/nrf-sdk/nRF5_SDK_17.1.0_ddde560
 PROJ_DIR := ../../..
 
+
+ifdef sdk_path
+  SDK_ROOT :=  $(sdk_path)
+endif
 $(OUTPUT_DIRECTORY)/nrf52840_xxaa.out: \
   LINKER_SCRIPT  := ble_app_blinky_gcc_nrf52.ld
 

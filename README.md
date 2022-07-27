@@ -1,3 +1,6 @@
 # ble_app_nrf
 # Config the path to the sdk
-export SDK_ROOT=<your path to sdk>
+<p>export SDK_ROOT=[your path to sdk]</p>
+# start button 0
+# stop button 1
+# device name: SafeTrust_tai
